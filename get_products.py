@@ -19,7 +19,7 @@ from functions.getUserAgent import *
 #proxy = getProxy()
 domain = 'shein.com' # For checking if the URL is from the same domain
 debug = False # Set to True to limit to 1 page
-db_mode = True # True = MongoDB, False = JSON
+db_mode = False # True = MongoDB, False = JSON
 
 with open('shein_categories.txt', 'r') as file: # Read URLs from file
     urls = file.readlines()
@@ -108,7 +108,8 @@ options.add_argument('--disable-dev-shm-usage')
 options.add_argument('--user-agent=' + GET_UA())
 options.add_argument('--incognito')
 options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-chrome_drvier_binary = '/opt/homebrew/bin/chromedriver'
+chrome_drvier_binary = '/Users/charlieobrien/anaconda3/bin/chromedriver'
+
 driver = webdriver.Chrome(service=Service(chrome_drvier_binary), options=options)
 
 for url in urls:
@@ -118,26 +119,26 @@ for url in urls:
     driver.get(url)
 
     try:
-        pagination_text = driver.find_element(By.CLASS_NAME,'sui-pagination__total').text
+        pagination_text = driver.find_element(By.CLASS_NAME, 'sui-pagination__total').text
         pagination_number = re.sub("\D", "", pagination_text)
         max_pages = int(pagination_number)
         if debug:
-            max_pages = min(1, max_pages)  # Limit to 1 page in debug mode
+            max_pages = min(1, max_pages)
         print(f'Found {max_pages} pages')
     except Exception as e:
         print('Error getting pagination: ' + str(e))
-        max_pages = 1  # If no pagination, assume 1 page of product
+        max_pages = 1
         pass
 
-    # Initialize array for product urls
     product_urls = []
-
     for i in range(1, max_pages + 1):
         try:
-            print(f'Processing page {i} of {max_pages}')  # Progress update
+            
+            print(f'Processing page {i} of {max_pages}')
             driver.get(url + '?page=' + str(i))
 
             product_elements = driver.find_elements(By.CLASS_NAME, 'product-list__item')
+
             for product in product_elements:
                 href = product.find_element(By.TAG_NAME, 'a').get_attribute('href')
                 if not href or included_in_string(href, blacklistedWords):
@@ -161,11 +162,18 @@ for url in urls:
             print('Error processing page: ' + str(e))
             continue
 
+    # move the initialization outside the loop over pages
+    parsed_url = urlparse(url)
+    netloc_and_path = parsed_url.netloc + parsed_url.path
+    filename = f'product_urls_{netloc_and_path}.json'
+
+    directory = os.path.dirname(filename)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
     if not db_mode:
-        print('Writing to JSON file')
-        with open('product_urls.json', 'w') as outfile:
+        print(f'Writing to JSON file: {filename}')
+        with open(filename, 'w') as outfile:
             json.dump(product_urls, outfile)
 
 driver.quit()
-if db_mode:
-    client.close()
