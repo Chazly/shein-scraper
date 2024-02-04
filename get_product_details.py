@@ -16,7 +16,10 @@ import json
 import time
 import os
 import math
-
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 from functions.getProxy import *
 from functions.getUserAgent import *
 
@@ -44,26 +47,28 @@ chrome_drvier_binary = '/Users/charlieobrien/anaconda3/bin/chromedriver'
 driver = webdriver.Chrome(service=Service(chrome_drvier_binary), options=options)
 
 # Set the path to the folder containing JSON files with product URLs
-url_folder_path = '/Users/charlieobrien/Documents/GitHub/shein-scraper/product_urls_us.shein.com'
+url_folder_path = '/Users/charlieobrien/Documents/GitHub/shein-scraper/product_urls_us.shein.com/hotsale'
 
 # Fetch all JSON files in the specified folder
 for filename in os.listdir(url_folder_path):
 
     if filename.endswith('.json'):
+
         file_path = os.path.join(url_folder_path, filename)
-        
+
+        product_urls = []
         with open(file_path, 'r') as file:
             product_urls = json.load(file)
 
         for url in product_urls: 
+
             print('Processing ' + url)
-            url = url['url']
             retries = 0
-            product_urls = []
+            
 
             while retries < RETRIES:
                 try:
-                    url_collection.update_one({'url': url}, {'$set': {'status': 'processing'}})
+                    #url.update_one({'url': url}, {'$set': {'status': 'processing'}})
                     driver.get(url)
                     #WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[1]/div/div[1]/div/div[2]/div[2]/div/div[3]/div[1]/div/div/button[2]/div')))
                     break
@@ -74,11 +79,11 @@ for filename in os.listdir(url_folder_path):
 
             if retries == RETRIES:
                 print('Giving up on ' + url)
-                url_collection.update_one({'url': url}, {'$set': {'status': 'failed'}})
+                url.update_one({'url': url}, {'$set': {'status': 'failed'}})
                 continue
             
             try:
-                print('Processing ' + url)
+                print('Processing of ' + url + ' has begun.')
                 try: # Close the popup
                     button_popup = driver.find_element(By.XPATH, '/html/body/div[1]/div[2]/div/div/div[1]/div/div/div[2]/div/i').click()
                     driver.implicitly_wait(5)
@@ -99,6 +104,8 @@ for filename in os.listdir(url_folder_path):
                 # get product images for every color
                 product_images = []
                 get_product_images = True
+                get_product_prices = True
+                product_prices = []
 
                 try:
                     colors = driver.find_elements(By.CLASS_NAME, 'product-intro__color-radio')
@@ -108,6 +115,7 @@ for filename in os.listdir(url_folder_path):
                     except Exception as e:
                         get_product_images = False
                 product_colors = []
+
                 if get_product_images:
                     if len(colors) >= 2:
                         for color in colors:
@@ -115,174 +123,114 @@ for filename in os.listdir(url_folder_path):
                             print('Select Color: %s' % selected_color)
                             product_colors.append(selected_color)
 
+                            WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, 'product-intro__color-radio')))
                             ActionChains(driver).move_to_element(color).click(color).perform()
-                            color.click()
-                            time.sleep(5) # Wait for product iamges to appear
+                            
                             try:
+                                # Ensure product images are present
+                                product_cropped_images = WebDriverWait(driver, 10).until(
+                                EC.presence_of_all_elements_located((By.CLASS_NAME, 'product-intro__thumbs-item'))
+                                     )
                                 product_cropped_images = driver.find_elements(By.CLASS_NAME, 'product-intro__thumbs-item')
                                 for image in product_cropped_images:
+
                                     image_url = image.find_element(By.TAG_NAME, 'img').get_attribute('src')
+
+
                                     final_url = image_url.replace('_thumbnail_220x293', '')
+
                                     print('Adding product image with color values %s' % final_url)
                                     product_images.append([selected_color, final_url])
                             except Exception as e:
                                 print('There was an error getting the product images for ' + product_id)
                                 print('Product Image Error: ' + str(e))
                                 continue
+                    else:
+                        try:
+                            # Ensure product images are present
+                            product_cropped_images = WebDriverWait(driver, 10).until(
+                            EC.presence_of_all_elements_located((By.CLASS_NAME, 'product-intro__thumbs-item'))
+                                     )
+                            product_cropped_images = driver.find_elements(By.CLASS_NAME, 'product-intro__thumbs-item')
+                            for image in product_cropped_images:
 
-                    product_data = {
-                        'product_id': product_id,
-                        'title': title,
-                        'url': url,
-                        'colors': product_colors,
-                        'images': product_images,
-                        'last_update': datetime.now(),
-                        'timestamp': datetime.now()
+                                image_url = image.find_element(By.TAG_NAME, 'img').get_attribute('src')
+
+
+                                final_url = image_url.replace('_thumbnail_220x293', '')
+
+                                print('Adding product image.')
+                                product_images.append([final_url])
+
+                        except Exception as e:
+                            print('There was an error getting the product images for ' + product_id)
+                            print('Product Image Error: ' + str(e))
+                            continue
+
+                if get_product_prices:
+                    try:
+                        final_price_element = driver.find_element(By.CLASS_NAME, 'price-estimated-percent__price')
+                        final_price = final_price_element.text.strip()
+                        
+                        if final_price:
+                            print('Adding price!')
+                            product_prices.append(['price', final_price])
+                        else:
+                            raise Exception("Empty price element")
+                    except NoSuchElementException:
+                        try:
+                            final_price_element = driver.find_element(By.CLASS_NAME, 'discount from')
+                            final_price = final_price_element.text.strip()
+
+                            if final_price:
+                                print('Adding discounted price!')
+                                product_prices.append(['price', final_price])
+                            else:
+                                raise Exception("Empty discounted price element")
+                        except NoSuchElementException:
+                            print('No price found, using default value')
+                            final_price = '$4.04'
+                            product_prices.append(['price', final_price])
+                                    
+
+                product_data = {
+                    'product_id': product_id,
+                    'title': title,
+                    'url': url,
+                    'colors': product_colors,
+                    'images': product_images,
+                    'prices': product_prices
                 }
 
-                #Insert the product data into MongoDB
-                product_collection.insert_one(product_data)
+                #Insert the product data into the Product Files folder 
 
-                # Get the reviews
-                try:
-                    image_count = driver.find_element(By.CLASS_NAME, 'j-expose__review-image-tab-target').text
-                    image_count = re.sub("\D", "", image_count)
-                    image_count = int(image_count)
-                except Exception as e:
-                    image_count = 0
+                filename = f"{product_data['product_id']}.json"
 
-                print(f'Found {image_count} reviews with images')
-                if image_count > 0:
-                    try:
-                        # move to image button
-                        ActionChains(driver).move_to_element(driver.find_element(By.CLASS_NAME, 'j-expose__review-image-tab-target')).perform()
-                        image_tab_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, 'j-expose__review-image-tab-target'))) # Review with images tab
-                        ActionChains(driver).move_to_element(image_tab_btn).click(image_tab_btn).perform()
-                    except Exception as e:
-                        print('Error clicking image tab: ' + str(e))
-                        pass
-                    print('Clicked image tab button')
-                    image_pages = math.ceil(int(image_count) / 3) # 3 images per page
-                    print(f'Found {image_pages} pages of reviews with images')
-                    if limit_to_3_max_review_pages:
-                        image_pages = min(3, image_pages)
-                    for i in range(1, image_pages + 1): # Loop through all image pages
-                        print(f'Processing image page {i} of {image_pages}')  # Progress update
+                
+                #build the full path of the output folder 
+                output_folder = '/Users/charlieobrien/Documents/GitHub/shein-scraper/Product Files'
+                output_folder_path = os.path.join(output_folder, filename)
 
-                        page_reviews = WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CLASS_NAME, 'common-reviews__list-item')))
+                #should build the price building logic in here and add to the above data type 
 
-                        for review in page_reviews:
-                            print('=== Review ===')
-                            review_info = {}
-                            try:
-                                WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'common-reviews__list-item')))
-                                ActionChains(driver).move_to_element(review).perform() # Hover over review to load it
-                            except Exception as e:
-                                print('Error hovering over review')
-                                pass
-
-                            try:
-                                review_info['review_id'] = int(review.get_attribute('data-comment-id'))
-                            except Exception as e:
-                                review_info['review_id'] = 0
-
-                            print('Review ID: ' + str(review_info['review_id']))
-
-                            try:
-                                review_info['likes'] = int(re.sub("\D", "", review.find_element(By.CLASS_NAME, 'like-num').text))
-                            except Exception as e:
-                                review_info['likes'] = 0
-                                pass
-
-                            print('Likes: ' + str(review_info['likes']))
-
-                            review_info['product_id'] = product_id
-                            print('Product ID: ' + str(review_info['product_id']))
-                            review_info['timestamp'] = datetime.now()
-                            print('Timestamp: ' + str(review_info['timestamp']))
-
-                            try:
-                                print('Getting images for review ' + str(review_info['review_id']))
-                                start_time = time.time()
-                                while True:
-                                    images = review.find_elements(By.CLASS_NAME, 'j-review-img')
-                                    if images or time.time() - start_time > 10:
-                                        break
-                                    time.sleep(0.5)
-
-                                if not images:
-                                    print('No images found after 10 seconds')
-                                else:
-                                    print('Found ' + str(len(images)) + ' images')
-                                image_array = []
-
-                                for image in images:
-                                    try:
-                                        ActionChains(driver).move_to_element(image).perform() # Hover over image to load it
-                                        wait_for_review_image_load(driver, image)
-                                        image_url = image.get_attribute('src')
-                                        final_url = image_url.replace('_thumbnail_x460', '')
-                                        image_array.append('https:' + final_url)
-                                    except Exception as e:
-                                        pass
-
-
-                                review_info['images'] = image_array
-                            except Exception as e:
-                                # Problem explanation:
-                                # So when the first review has no images, the script tries to get the images of this review
-                                # due the error "stale not found" the script will click on the image tab again
-                                # and then it will try to get the new reviews from the right tab
-                                print('There was an error getting the images / mostly because there are no images')
-                                # click again on image tab
-                                image_tab_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, 'j-expose__review-image-tab-target'))) # Review with images tab
-                                ActionChains(driver).move_to_element(image_tab_btn).click(image_tab_btn).perform()
-                                time.sleep(2)
-                                continue
-
-                            if review_info['review_id'] != 0 and review_info['likes'] != 0 and len(review_info['images']) > 0:
-                                print('Inserting review into MongoDB')
-                                product_reviews_collection.insert_one(review_info)
-                                print('=====')
-                            elif review_info['review_likes'] == 0:
-                                print('Skipping all reviews because there are no likes anymore / which mostly means that the reviews doesnt show a human anymore')
-                                print('=====')
-                                pass
-                            else:
-                                print('Skipping review because it is missing data')
-                                print('=====')
-
-                        if i < image_pages:
-                            try:
-                                next_page_button = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, 'sui-pagination__next')))
-                                next_page_button.click()
-                            except Exception as e:
-                                print('Error clicking next page button: ' + str(e))
-                                popover_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CLASS_NAME, 'sui-popover__content')))
-                                popover_btn.click()
-                                pass
-
-                        time.sleep(2)
-                else:
-                    url_collection.update_one({'url': url}, {'$set': {'status': 'no_reviews'}})
-
+                time.sleep(2)
+                #add product data to the product files folder 
+                    
+                with open(output_folder_path, 'w') as outfile: 
+                    json.dump(product_data, outfile)
+                
+                
+                
             except Exception as e:
                 print('General Error: ' + str(e))
-                url_collection.update_one({'url': url}, {'$set': {'status': 'failed'}})
+                #url_collection.update_one({'url': url}, {'$set': {'status': 'failed'}})
                 continue
             
             
-            url_collection.update_one({'url': url}, {'$set': {'status': 'complete'}})
-            print('Done processing ' + url)
-        print('Done processing all URLs')
+            
+            
 driver.quit()
-client.close()
           
-#prox_options = {
-#    'proxy': {
-#        'http': proxy
-#    }
-#}
 
 
 
@@ -296,12 +244,4 @@ client.close()
 
 
 
-'''
-pending_urls = url_collection.find({"status": "pending"}).sort("timestamp", 1)
 
-
-for url in pending_urls:
-    url = url['url']
-    print('Processing ' + url)
-
-    '''
