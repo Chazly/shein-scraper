@@ -59,7 +59,7 @@ for filename in os.listdir(url_folder_path):
         product_urls = []
         with open(file_path, 'r') as file:
             product_urls = json.load(file)
-
+            
         for url in product_urls: 
 
             print('Processing ' + url)
