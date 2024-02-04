@@ -12,7 +12,8 @@ from pymongo import MongoClient
 from datetime import datetime
 import json
 import os
-
+from selenium.common.exceptions import NoSuchElementException
+import time
 from functions.getProxy import *
 from functions.getUserAgent import *
 
@@ -112,23 +113,31 @@ chrome_drvier_binary = '/Users/charlieobrien/anaconda3/bin/chromedriver'
 
 driver = webdriver.Chrome(service=Service(chrome_drvier_binary), options=options)
 
+product_urls = []
+
 for url in urls:
     url = url.strip()
     print('Processing ' + url)
-
+    
     driver.get(url)
 
     try:
-        pagination_text = driver.find_element(By.CLASS_NAME, 'sui-pagination__total').text
-        pagination_number = re.sub("\D", "", pagination_text)
-        max_pages = int(pagination_number)
-        if debug:
-            max_pages = min(1, max_pages)
-        print(f'Found {max_pages} pages')
-    except Exception as e:
-        print('Error getting pagination: ' + str(e))
-        max_pages = 1
-        pass
+        # Check if the pagination element is present
+        time.sleep(2)
+        pagination_element = driver.find_element(By.CLASS_NAME, 'sui-pagination__total')
+        pagination_text = pagination_element.text.strip()
+        if pagination_text:  # Check if pagination text is not empty
+            pagination_number = re.sub("\D", "", pagination_text)
+            max_pages = int(pagination_number)
+            if debug:
+                max_pages = min(1, max_pages)  # Limit to 1 page in debug mode
+            print(f'Found {max_pages} pages')
+        else:
+            max_pages = 1  # If no pagination text, assume 1 page of product
+            print('No pagination text found, assuming 1 page')
+    except NoSuchElementException as e:
+        print(f'Error getting pagination: {str(e)}')
+        max_pages = 1  # If pagination element not found, assume 1 page of product
 
     product_urls = []
     for i in range(1, max_pages + 1):
